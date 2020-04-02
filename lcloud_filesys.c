@@ -24,15 +24,13 @@ typedef int bool;
 
 
 static LCloudRegisterFrame frm, rfrm, b0, b1, c0, c1, c2, d0, d1;
+LCloudRegisterFrame nextd0;
+int numdevice; //number of devices // there are 5 devices in assign3
+#define filenum 34
 
-LcDeviceId did;
+//LcDeviceId did;
 bool isDeviceOn;
 bool secblk[10][64];
-
-typedef struct{
-    int blk;
-    int sec;
-}address;
 
 typedef struct{
     char *fname;
@@ -41,11 +39,18 @@ typedef struct{
     uint32_t pos;
     int flength;
 
-    address blkinfo;
-
 }filesys;
 
-filesys finfo;
+typedef struct{
+    LcDeviceId did;
+    int blk;
+    int sec;
+    filesys finfo[filenum]; //file structure
+
+}device;
+device devinfo;
+
+
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -58,8 +63,8 @@ void getfreeblk(){
     for(i=0; i<10; i++){
         for(j=0; j<64; j++){
             if(secblk[i][j] == 0){
-                finfo.blkinfo.sec = i;
-                finfo.blkinfo.blk = j;
+                devinfo.sec = i;
+                devinfo.blk = j;
                 return ;
             }
         }
@@ -188,6 +193,7 @@ int do_write(int did, int sec, int blk, char *buf){
 
 int32_t lcpoweron(void){
     int i,j;
+    int fd;
 
     logMessage(LcControllerLLevel, "Initialzing Lion Cloud system ...");
 
@@ -199,19 +205,20 @@ int32_t lcpoweron(void){
     isDeviceOn = true;
 
     ////////////////// initialize //////////////////////
-    finfo.isopen = false;
-    finfo.fname = "\0";   // ' '?
-    finfo.pos = -1;
-    finfo.fhandle = -1;
-    finfo.flength = -1;
-    //sector and block 
+    for(fd=0; fd<filenum; fd++){
 
-    //initialize cache
+        devinfo.finfo[fd].isopen = false;
+        devinfo.finfo[fd].fname = "\0";   // ' '?
+        devinfo.finfo[fd].pos = -1;
+        //devinfo.finfo[fd].fhandle = -1;
+        devinfo.finfo[fd].flength = -1;
+        //sector and block 
 
-    //initiailize secblk
-    for(i=0;i<10;i++){
-        for(j=0;j<64;j++){
-            secblk[i][j] = 0;
+        //initiailize secblk
+        for(i=0;i<10;i++){
+            for(j=0;j<64;j++){
+                secblk[i][j] = 0;
+            }
         }
     }
 
@@ -219,10 +226,8 @@ int32_t lcpoweron(void){
     frm = create_lcloud_registers(0, 0 ,LC_DEVPROBE ,0, 0, 0, 0); 
     rfrm = lcloud_io_bus(frm, NULL);
     extract_lcloud_registers(rfrm, &b0, &b1, &c0, &c1, &c2, &d0, &d1);
-    did = probeID(d0);
-    logMessage(LcControllerLLevel, "Found device [%d] in cloud probe.", did);
-
-    
+    devinfo.did = probeID(d0);
+    logMessage(LcControllerLLevel, "Found device [%d] in cloud probe.", devinfo.did);
 
     return 0;
 }
@@ -248,29 +253,35 @@ int newfilehandle(){
 // Outputs      : file handle if successful test, -1 if failure
 
 LcFHandle lcopen( const char *path ) {
+    int fd;
 
     //check if power is off
     if(isDeviceOn == false){
         lcpoweron();
     }
     
-    //check if file is open
-    if(strcmp(path, finfo.fname) == 0){
-        if(finfo.isopen == true){
-            logMessage(LOG_ERROR_LEVEL, "File is already opened.\n\n");
-            return -1;
+    for(fd=0; fd<filenum; fd++){
+
+        //check if file is open
+        if(strcmp(path, devinfo.finfo[fd].fname) == 0){
+            if(devinfo.finfo[fd].isopen == true){
+                logMessage(LOG_ERROR_LEVEL, "File is already opened.\n\n");
+                return -1;
+            }
         }
+
+        devinfo.finfo[fd].isopen = true;
+        devinfo.finfo[fd].fname = strdup(path);        //save file name
+        //devinfo.finfo[fd].fhandle = newfilehandle();   //pick unique file handle
+        devinfo.finfo[fd].pos = 0;                     //set file pointer to first byte
+        devinfo.finfo[fd].flength = 0;
+
     }
+    fd = newfilehandle();
+    devinfo.finfo[fd].fhandle = fd;
+    logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", devinfo.finfo[fd].fname, devinfo.finfo[fd].fhandle);
 
-    finfo.isopen = true;
-    finfo.fname = strdup(path);        //save file name
-    finfo.fhandle = newfilehandle();   //pick unique file handle
-    finfo.pos = 0;                     //set file pointer to first byte
-    finfo.flength = 0;
-
-    
-    logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", finfo.fname, finfo.fhandle);
-    return(finfo.fhandle);
+    return(devinfo.finfo[fd].fhandle);
 } 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -294,7 +305,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
     /*************Error Checking****************/
 
     //check if file handle is valid (is associated with open file)
-    if(fh < 0 || finfo.isopen == false){
+    if(fh < 0 || devinfo.finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "Failed to read: file handle is not valid or file is not opened");
         return -1;
     }
@@ -304,17 +315,17 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         return -1;
     }
     //check if reading exceeds end of the file
-    if(finfo.pos+len > finfo.flength){
+    if(devinfo.finfo[fh].pos+len > devinfo.finfo[fh].flength){
         logMessage(LOG_ERROR_LEVEL, "Reading exceeds end of the file");
         return -1;
     }
 
-    int start = finfo.flength - finfo.pos;
+    int start = devinfo.finfo[fh].flength - devinfo.finfo[fh].pos;
     if(len > start){
         len = start;
     }
 
-    filepos = finfo.pos;
+    filepos = devinfo.finfo[fh].pos;
     readbytes = len;
 
     /////////////// begin reading ////////////////////
@@ -336,11 +347,11 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             size = remaining;
         }
         
-        finfo.blkinfo.blk = blknum % 10;
-        finfo.blkinfo.sec = secnum;
+        devinfo.blk = blknum % 10;
+        devinfo.sec = secnum;
 
         // read, and copy up to len to the buf
-        do_read(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+        do_read(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
         memcpy(buf, tempbuf+offset, size);
 
 
@@ -351,14 +362,14 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
         
         // if position exceeds the size of the file then increase file size to current position
-        if(filepos > finfo.flength){
-            finfo.flength = filepos;
+        if(filepos > devinfo.finfo[fh].flength){
+            devinfo.finfo[fh].flength = filepos;
         }
 
-        finfo.pos = filepos;
+        devinfo.finfo[fh].pos = filepos;
     }
 
-    logMessage(LcDriverLLevel, "Driver read %d bytes to file %s", len, finfo.fname, finfo.flength);
+    logMessage(LcDriverLLevel, "Driver read %d bytes to file %s", len, devinfo.finfo[fh].fname, devinfo.finfo[fh].flength);
     return( len );
 }
 
@@ -382,7 +393,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     /*************Error Checking****************/
     
     //check if file handle is valid (is associated with open file)
-    if(finfo.fhandle != fh || fh < 0 || finfo.isopen == false){
+    if(devinfo.finfo[fh].fhandle != fh || fh < 0 || devinfo.finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "Failed to write: file handle is not valid or file is not opened");
         return -1;
     }
@@ -394,7 +405,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     
     /*************Begin Writing****************/
     writebytes = len;
-    filepos = finfo.pos;
+    filepos = devinfo.finfo[fh].pos;
 
 
     while(writebytes > 0){
@@ -407,17 +418,17 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
         ////////////////////// Sector and Block ///////////////////////////////
         // mark off used sectors or block
-        if(finfo.blkinfo.blk == (blknum % 10)){
-            secblk[finfo.blkinfo.sec][finfo.blkinfo.blk] = 1;
+        if(devinfo.blk == (blknum % 10)){
+            secblk[devinfo.sec][devinfo.blk] = 1;
         }
         getfreeblk();
-        if(finfo.blkinfo.blk > 63){
+        if(devinfo.blk > 63){
             logMessage(LOG_ERROR_LEVEL, "Block number exceeds 64");
             return -1;
         }
 
-        finfo.blkinfo.blk = blknum % 10;
-        finfo.blkinfo.sec = secnum;
+        devinfo.blk = blknum % 10;
+        devinfo.sec = secnum;
         //////////////////// Sector and Block end /////////////////////////////
         
 
@@ -431,9 +442,9 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
         /************** if fills exactly 256  *****************/
         if(offset + writebytes == LC_DEVICE_BLOCK_SIZE){
-            do_read(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf); //read to find offset
+            do_read(devinfo.did, devinfo.sec, devinfo.blk, tempbuf); //read to find offset
             memcpy(tempbuf+offset, buf, writebytes );
-            do_write(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+            do_write(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
         }
         /////////// one block done ///////////
 
@@ -441,16 +452,16 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         /************* if exceeds the block size **************/
         else if(offset + writebytes > LC_DEVICE_BLOCK_SIZE){ 
             //write number of blocks
-            do_read(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+            do_read(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
             memcpy(tempbuf+offset, buf, size );
-            do_write(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+            do_write(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
             /////////// one block done ///////////
         }
 
         else{  //if(offset + len < 256)
-            do_read(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+            do_read(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
             memcpy(tempbuf+offset, buf, size ); //flength%256 instead of size?
-            do_write(did, finfo.blkinfo.sec, finfo.blkinfo.blk, tempbuf);
+            do_write(devinfo.did, devinfo.sec, devinfo.blk, tempbuf);
             // fill with garbage??
         }
 
@@ -462,14 +473,14 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
 
         // if position exceeds the size of the file then increase file size to current position
-        if(filepos > finfo.flength){
-            finfo.flength = filepos;
+        if(filepos > devinfo.finfo[fh].flength){
+            devinfo.finfo[fh].flength = filepos;
         }
       
-        finfo.pos = filepos;
+        devinfo.finfo[fh].pos = filepos;
     }
     
-    logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, finfo.fname, finfo.flength);
+    logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, devinfo.finfo[fh].fname, devinfo.finfo[fh].flength);
     return( len );
 }
 
@@ -480,21 +491,21 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 //
 // Inputs       : fh - the file handle of the file to seek in
 //                off - offset within the file to seek to
-// Outputs      : the current position in the file if successful test, -1 if failure
+// Outputs      : 0 if successful test, -1 if failure
 
 int lcseek( LcFHandle fh, size_t off ) {
-    //filesys *finfo;
+    //filesys *devinfo.finfo;
 
-    if(fh < 0 || finfo.isopen == false || isDeviceOn == false || (finfo.pos + off) > finfo.flength || finfo.flength < 0){
+    if(fh < 0 || devinfo.finfo[fh].isopen == false || isDeviceOn == false || (devinfo.finfo[fh].pos + off) > devinfo.finfo[fh].flength || devinfo.finfo[fh].flength < 0){
         logMessage(LOG_ERROR_LEVEL, "file failed to seek in");
         return -1;
     }
-    if(finfo.flength < off){
-        logMessage(LOG_ERROR_LEVEL, "Seeking out of file [%d < %d]", finfo.flength, off);
+    if(devinfo.finfo[fh].flength < off){
+        logMessage(LOG_ERROR_LEVEL, "Seeking out of file [%d < %d]", devinfo.finfo[fh].flength, off);
     }
 
-    logMessage(LcDriverLLevel, "Seeking to position %d in file handle %d [%s]", off, fh, finfo.fname);
-    finfo.pos = off;
+    logMessage(LcDriverLLevel, "Seeking to position %d in file handle %d [%s]", off, fh, devinfo.finfo[fh].fname);
+    devinfo.finfo[fh].pos = off;
 
     return( 0 );
 }
@@ -510,16 +521,16 @@ int lcseek( LcFHandle fh, size_t off ) {
 int lcclose( LcFHandle fh ) {
     
     //check if there is no file to close
-    if(finfo.isopen == false){
+    if(devinfo.finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "There is no opened file to close");
         return -1;
     }
     //free if malloc
 
     //close file
-    finfo.isopen = false;
+    devinfo.finfo[fh].isopen = false;
 
-    logMessage(LcDriverLLevel, "Closed file handle %d [%s]", fh, finfo.fname);
+    logMessage(LcDriverLLevel, "Closed file handle %d [%s]", fh, devinfo.finfo[fh].fname);
     return( 0 );
 }
 
