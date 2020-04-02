@@ -206,6 +206,8 @@ int32_t lcpoweron(void){
     finfo.flength = -1;
     //sector and block 
 
+    //initialize cache
+
     //initiailize secblk
     for(i=0;i<10;i++){
         for(j=0;j<64;j++){
@@ -219,6 +221,8 @@ int32_t lcpoweron(void){
     extract_lcloud_registers(rfrm, &b0, &b1, &c0, &c1, &c2, &d0, &d1);
     did = probeID(d0);
     logMessage(LcControllerLLevel, "Found device [%d] in cloud probe.", did);
+
+    
 
     return 0;
 }
