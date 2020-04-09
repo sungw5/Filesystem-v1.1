@@ -26,7 +26,8 @@ typedef int bool;
 static LCloudRegisterFrame frm, rfrm, b0, b1, c0, c1, c2, d0, d1;
 LCloudRegisterFrame nextd0;
 int numdevice; //number of devices // there are 5 devices in assign3
-#define filenum 34
+#define filenum 100
+
 
 //LcDeviceId did;
 bool isDeviceOn;
@@ -210,17 +211,18 @@ int32_t lcpoweron(void){
         devinfo.finfo[fd].isopen = false;
         devinfo.finfo[fd].fname = "\0";   // ' '?
         devinfo.finfo[fd].pos = -1;
-        //devinfo.finfo[fd].fhandle = -1;
+        devinfo.finfo[fd].fhandle = -1;
         devinfo.finfo[fd].flength = -1;
         //sector and block 
 
-        //initiailize secblk
+    }
+
+    //initiailize secblk
         for(i=0;i<10;i++){
             for(j=0;j<64;j++){
                 secblk[i][j] = 0;
             }
         }
-    }
 
     // Do Operation - Devprobe
     frm = create_lcloud_registers(0, 0 ,LC_DEVPROBE ,0, 0, 0, 0); 
@@ -253,32 +255,36 @@ int newfilehandle(){
 // Outputs      : file handle if successful test, -1 if failure
 
 LcFHandle lcopen( const char *path ) {
-    int fd;
 
-    //check if power is off
+    int fd=0;
+
+    //check if power is off, and poweron
     if(isDeviceOn == false){
         lcpoweron();
     }
-    
-    for(fd=0; fd<filenum; fd++){
 
-        //check if file is open
+    while(fd < filenum){
+        //check if opening the file again
         if(strcmp(path, devinfo.finfo[fd].fname) == 0){
             if(devinfo.finfo[fd].isopen == true){
                 logMessage(LOG_ERROR_LEVEL, "File is already opened.\n\n");
                 return -1;
             }
         }
-
-        devinfo.finfo[fd].isopen = true;
-        devinfo.finfo[fd].fname = strdup(path);        //save file name
-        //devinfo.finfo[fd].fhandle = newfilehandle();   //pick unique file handle
-        devinfo.finfo[fd].pos = 0;                     //set file pointer to first byte
-        devinfo.finfo[fd].flength = 0;
-
+        //if we are opening another file, increment the file handle
+        else{ 
+            fd++;
+            if(devinfo.finfo[fd].isopen == false ) break;
+        }
     }
-    fd = newfilehandle();
-    devinfo.finfo[fd].fhandle = fd;
+
+    devinfo.finfo[fd].isopen = true;
+    devinfo.finfo[fd].fname = strdup(path);        //save file name
+    devinfo.finfo[fd].fhandle = fd;                //pick unique file handle
+    devinfo.finfo[fd].pos = 0;                     //set file pointer to first byte
+    devinfo.finfo[fd].flength = 0;
+
+
     logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", devinfo.finfo[fd].fname, devinfo.finfo[fd].fhandle);
 
     return(devinfo.finfo[fd].fhandle);
