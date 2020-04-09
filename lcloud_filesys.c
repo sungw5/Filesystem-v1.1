@@ -277,7 +277,7 @@ LcFHandle lcopen( const char *path ) {
             if(devinfo.finfo[fd].isopen == false ) break;
         }
     }
-
+    // test test test test test test test test test test test test test test test test test test test test test 
     devinfo.finfo[fd].isopen = true;
     devinfo.finfo[fd].fname = strdup(path);        //save file name
     devinfo.finfo[fd].fhandle = fd;                //pick unique file handle
