@@ -27,6 +27,7 @@ static LCloudRegisterFrame frm, rfrm, b0, b1, c0, c1, c2, d0, d1;
 LCloudRegisterFrame nextd0;
 int numdevice; //number of devices // there are 5 devices in assign3
 #define filenum 100
+#define devicenum 5
 
 
 //LcDeviceId did;
@@ -46,6 +47,8 @@ typedef struct{
     LcDeviceId did;
     int blk;
     int sec;
+    int maxblk;
+    int maxsec;
     filesys finfo[filenum]; //file structure
 
 }device;
@@ -218,7 +221,7 @@ int32_t lcpoweron(void){
 
     int n=0; //devinit loop counter
     
-    devinfo = malloc(sizeof(device));
+    devinfo = malloc(sizeof(device) * devicenum);
 
     // Do Operation - Devprobe
     frm = create_lcloud_registers(0, 0 ,LC_DEVPROBE ,0, 0, 0, 0); 
@@ -226,36 +229,40 @@ int32_t lcpoweron(void){
     extract_lcloud_registers(rfrm, &b0, &b1, &c0, &c1, &c2, &d0, &d1); //after extract I get probed d0 (22048)
 
     do{ //find out each multiple devices' number
+    
         if(first == true){
-            devinfo->did = probeID(d0);
+            devinfo[n].did = probeID(d0);
             first = false;
         }
         else{
-            devinfo->did = probeID(reserved0); 
+            devinfo[n].did = probeID(reserved0); 
         }
         //logMessage(LcControllerLLevel, "Found device [%d] in cloud probe.", devinfo->did);
 
-        frm = create_lcloud_registers(0, 0 ,LC_DEVINIT ,devinfo->did, 0, 0, 0); 
+        frm = create_lcloud_registers(0, 0 ,LC_DEVINIT ,devinfo[n].did, 0, 0, 0); 
         rfrm = lcloud_io_bus(frm, NULL);
         reserved0 = d0; // reserve d0 after probeID function
         extract_lcloud_registers(rfrm, &b0, &b1, &c0, &c1, &c2, &d0, &d1);
-        logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo->did, d0, d1);
+        devinfo[n].maxsec = d0;
+        devinfo[n].maxblk = d1;
+        logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo[n].did, d0, d1);
 
+        
+        ////////////////// initialize //////////////////////
+        for(fd=0; fd<filenum; fd++){
+
+            devinfo[n].finfo[fd].isopen = false;
+            devinfo[n].finfo[fd].fname = "\0";   // ' '?
+            devinfo[n].finfo[fd].pos = -1;
+            devinfo[n].finfo[fd].fhandle = -1;
+            devinfo[n].finfo[fd].flength = -1;
+
+        }
+        //increment index(next device)
         n++;
-    }while(n<5);
+    }while(n<devicenum);
 
 
-    ////////////////// initialize //////////////////////
-    for(fd=0; fd<filenum; fd++){
-
-        devinfo->finfo[fd].isopen = false;
-        devinfo->finfo[fd].fname = "\0";   // ' '?
-        devinfo->finfo[fd].pos = -1;
-        devinfo->finfo[fd].fhandle = -1;
-        devinfo->finfo[fd].flength = -1;
-        //sector and block 
-
-    }
     //initiailize secblk
     for(i=0;i<10;i++){
         for(j=0;j<64;j++){
@@ -374,7 +381,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         blknum = filepos/LC_DEVICE_BLOCK_SIZE;     // len/256
         offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * 10); //filepos/2304
+        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
 
 
         //if exceeds the len we will write will be the remaining
@@ -385,7 +392,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             size = remaining;
         }
         
-        devinfo->blk = blknum % 10;
+        devinfo->blk = blknum;
         devinfo->sec = secnum;
 
         // read, and copy up to len to the buf
@@ -423,7 +430,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
 int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
-    uint32_t writebytes, filepos, blknum, secnum;
+    uint64_t writebytes, filepos, blknum, secnum;
     uint16_t offset, remaining, size;
     char tempbuf[LC_DEVICE_BLOCK_SIZE];
 
@@ -451,7 +458,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         blknum = filepos/LC_DEVICE_BLOCK_SIZE;     // len/256
         offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * 10); //filepos/2304
+        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
 
 
         ////////////////////// Sector and Block ///////////////////////////////
@@ -465,7 +472,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             return -1;
         }
 
-        devinfo->blk = blknum % 10;
+        devinfo->blk = blknum;
         devinfo->sec = secnum;
         //////////////////// Sector and Block end /////////////////////////////
         
@@ -545,7 +552,7 @@ int lcseek( LcFHandle fh, size_t off ) {
     logMessage(LcDriverLLevel, "Seeking to position %d in file handle %d [%s]", off, fh, devinfo->finfo[fh].fname);
     devinfo->finfo[fh].pos = off;
 
-    return( 0 );
+    return( devinfo->finfo[fh].pos );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
