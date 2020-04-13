@@ -42,6 +42,7 @@ typedef struct{
     int flength;
 
 }filesys;
+filesys finfo[filenum]; //file structure
 
 typedef struct{
     LcDeviceId did;
@@ -49,8 +50,7 @@ typedef struct{
     int sec;
     int maxblk;
     int maxsec;
-    filesys finfo[filenum]; //file structure
-
+    
 }device;
 device *devinfo;
 
@@ -248,19 +248,21 @@ int32_t lcpoweron(void){
         logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo[n].did, d0, d1);
 
         
-        ////////////////// initialize //////////////////////
-        for(fd=0; fd<filenum; fd++){
-
-            devinfo[n].finfo[fd].isopen = false;
-            devinfo[n].finfo[fd].fname = "\0";   // ' '?
-            devinfo[n].finfo[fd].pos = -1;
-            devinfo[n].finfo[fd].fhandle = -1;
-            devinfo[n].finfo[fd].flength = -1;
-
-        }
+        
         //increment index(next device)
         n++;
     }while(n<devicenum);
+
+    ////////////////// file initialize //////////////////////
+    for(fd=0; fd<filenum; fd++){
+
+        finfo[fd].isopen = false;
+        finfo[fd].fname = "\0";   // ' '?
+        finfo[fd].pos = -1;
+        finfo[fd].fhandle = -1;
+        finfo[fd].flength = -1;
+
+    }
 
 
     //initiailize secblk
@@ -304,8 +306,8 @@ LcFHandle lcopen( const char *path ) {
 
     while(fd < filenum){
         //check if opening the file again
-        if(strcmp(path, devinfo->finfo[fd].fname) == 0){
-            if(devinfo->finfo[fd].isopen == true){
+        if(strcmp(path, finfo[fd].fname) == 0){
+            if(finfo[fd].isopen == true){
                 logMessage(LOG_ERROR_LEVEL, "File is already opened.\n\n");
                 return -1;
             }
@@ -313,20 +315,20 @@ LcFHandle lcopen( const char *path ) {
         //if we are opening another file, increment the file handle
         else{ 
             fd++;
-            if(devinfo->finfo[fd].isopen == false ) break;
+            if(finfo[fd].isopen == false ) break;
         }
     }
 
-    devinfo->finfo[fd].isopen = true;
-    devinfo->finfo[fd].fname = strdup(path);        //save file name
-    devinfo->finfo[fd].fhandle = fd;                //pick unique file handle
-    devinfo->finfo[fd].pos = 0;                     //set file pointer to first byte
-    devinfo->finfo[fd].flength = 0;
+    finfo[fd].isopen = true;
+    finfo[fd].fname = strdup(path);        //save file name
+    finfo[fd].fhandle = fd;                //pick unique file handle
+    finfo[fd].pos = 0;                     //set file pointer to first byte
+    finfo[fd].flength = 0;
 
 
-    logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", devinfo->finfo[fd].fname, devinfo->finfo[fd].fhandle);
+    logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", finfo[fd].fname, finfo[fd].fhandle);
 
-    return(devinfo->finfo[fd].fhandle);
+    return(finfo[fd].fhandle);
 } 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -350,7 +352,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
     /*************Error Checking****************/
 
     //check if file handle is valid (is associated with open file)
-    if(fh < 0 || devinfo->finfo[fh].isopen == false){
+    if(fh < 0 || finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "Failed to read: file handle is not valid or file is not opened");
         return -1;
     }
@@ -360,17 +362,17 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         return -1;
     }
     //check if reading exceeds end of the file
-    if(devinfo->finfo[fh].pos+len > devinfo->finfo[fh].flength){
+    if(finfo[fh].pos+len > finfo[fh].flength){
         logMessage(LOG_ERROR_LEVEL, "Reading exceeds end of the file");
         return -1;
     }
 
-    int start = devinfo->finfo[fh].flength - devinfo->finfo[fh].pos;
+    int start = finfo[fh].flength - finfo[fh].pos;
     if(len > start){
         len = start;
     }
 
-    filepos = devinfo->finfo[fh].pos;
+    filepos = finfo[fh].pos;
     readbytes = len;
 
     /////////////// begin reading ////////////////////
@@ -407,14 +409,14 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
         
         // if position exceeds the size of the file then increase file size to current position
-        if(filepos > devinfo->finfo[fh].flength){
-            devinfo->finfo[fh].flength = filepos;
+        if(filepos > finfo[fh].flength){
+            finfo[fh].flength = filepos;
         }
 
-        devinfo->finfo[fh].pos = filepos;
+        finfo[fh].pos = filepos;
     }
 
-    logMessage(LcDriverLLevel, "Driver read %d bytes to file %s", len, devinfo->finfo[fh].fname, devinfo->finfo[fh].flength);
+    logMessage(LcDriverLLevel, "Driver read %d bytes to file %s", len, finfo[fh].fname, finfo[fh].flength);
     return( len );
 }
 
@@ -438,7 +440,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     /*************Error Checking****************/
     
     //check if file handle is valid (is associated with open file)
-    if(devinfo->finfo[fh].fhandle != fh || fh < 0 || devinfo->finfo[fh].isopen == false){
+    if(finfo[fh].fhandle != fh || fh < 0 || finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "Failed to write: file handle is not valid or file is not opened");
         return -1;
     }
@@ -450,7 +452,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     
     /*************Begin Writing****************/
     writebytes = len;
-    filepos = devinfo->finfo[fh].pos;
+    filepos = finfo[fh].pos;
 
 
     while(writebytes > 0){
@@ -518,14 +520,14 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
 
         // if position exceeds the size of the file then increase file size to current position
-        if(filepos > devinfo->finfo[fh].flength){
-            devinfo->finfo[fh].flength = filepos;
+        if(filepos > finfo[fh].flength){
+            finfo[fh].flength = filepos;
         }
       
-        devinfo->finfo[fh].pos = filepos;
+        finfo[fh].pos = filepos;
     }
     
-    logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, devinfo->finfo[fh].fname, devinfo->finfo[fh].flength);
+    logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, finfo[fh].fname, finfo[fh].flength);
     return( len );
 }
 
@@ -539,20 +541,20 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 // Outputs      : 0 if successful test, -1 if failure
 
 int lcseek( LcFHandle fh, size_t off ) {
-    //filesys *devinfo.finfo;
+    //filesys finfo;
 
-    if(fh < 0 || devinfo->finfo[fh].isopen == false || isDeviceOn == false || (devinfo->finfo[fh].pos + off) > devinfo->finfo[fh].flength || devinfo->finfo[fh].flength < 0){
+    if(fh < 0 || finfo[fh].isopen == false || isDeviceOn == false || (finfo[fh].pos + off) > finfo[fh].flength || finfo[fh].flength < 0){
         logMessage(LOG_ERROR_LEVEL, "file failed to seek in");
         return -1;
     }
-    if(devinfo->finfo[fh].flength < off){
-        logMessage(LOG_ERROR_LEVEL, "Seeking out of file [%d < %d]", devinfo->finfo[fh].flength, off);
+    if(finfo[fh].flength < off){
+        logMessage(LOG_ERROR_LEVEL, "Seeking out of file [%d < %d]", finfo[fh].flength, off);
     }
 
-    logMessage(LcDriverLLevel, "Seeking to position %d in file handle %d [%s]", off, fh, devinfo->finfo[fh].fname);
-    devinfo->finfo[fh].pos = off;
+    logMessage(LcDriverLLevel, "Seeking to position %d in file handle %d [%s]", off, fh, finfo[fh].fname);
+    finfo[fh].pos = off;
 
-    return( devinfo->finfo[fh].pos );
+    return( finfo[fh].pos ); //fix this 
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -566,16 +568,16 @@ int lcseek( LcFHandle fh, size_t off ) {
 int lcclose( LcFHandle fh ) {
     
     //check if there is no file to close
-    if(devinfo->finfo[fh].isopen == false){
+    if(finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "There is no opened file to close");
         return -1;
     }
     //free if malloc
 
     //close file
-    devinfo->finfo[fh].isopen = false;
+    finfo[fh].isopen = false;
 
-    logMessage(LcDriverLLevel, "Closed file handle %d [%s]", fh, devinfo->finfo[fh].fname);
+    logMessage(LcDriverLLevel, "Closed file handle %d [%s]", fh, finfo[fh].fname);
     return( 0 );
 }
 
