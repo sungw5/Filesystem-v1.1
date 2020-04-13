@@ -48,6 +48,7 @@ typedef struct{
     LcDeviceId did;
     int blk;
     int sec;
+    char **storage;
     int maxblk;
     int maxsec;
     
@@ -206,6 +207,7 @@ int32_t lcpoweron(void){
     int i,j;
     int fd;
     int reserved0;
+    int totalblock =0;
 
     //devinfo = malloc(sizeof(device));
 
@@ -247,7 +249,17 @@ int32_t lcpoweron(void){
         devinfo[n].maxblk = d1;
         logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo[n].did, d0, d1);
 
-        
+        // device tracker
+        devinfo[n].storage = (char**) malloc(sizeof(char*) * devinfo[n].maxblk); //ex. did = 5,  blk = 64
+        memset( devinfo[n].storage, 0, sizeof(char*) * devinfo[n].maxblk);
+        for(i=0; i<devinfo[n].maxblk; i++){
+            devinfo[n].storage[i] = (char*) malloc(sizeof(char) * devinfo[n].maxsec);  //ex. did = 5. sec = 10
+            memset( devinfo[n].storage[i], 0, sizeof(char) * devinfo[n].maxsec);
+        }
+
+
+
+        totalblock += sizeof(**devinfo[n].storage);
         
         //increment index(next device)
         n++;
@@ -261,7 +273,6 @@ int32_t lcpoweron(void){
         finfo[fd].pos = -1;
         finfo[fd].fhandle = -1;
         finfo[fd].flength = -1;
-
     }
 
 
@@ -273,16 +284,6 @@ int32_t lcpoweron(void){
     }
 
     return 0;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Function     : newfilehandle
-// Description  : create new filehandle.
-
-int newfilehandle(){
-    static int handle;
-    handle += 1;
-    return handle;
 }
 
 // File system interface implementation
