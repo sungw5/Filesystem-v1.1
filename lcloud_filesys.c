@@ -55,6 +55,8 @@ typedef struct{
 }device;
 device *devinfo;
 
+int totalblock = 0; // total number of blocks calculated during allocation
+
 
 
 
@@ -207,7 +209,6 @@ int32_t lcpoweron(void){
     int i,j;
     int fd;
     int reserved0;
-    int totalblock =0;
 
     //devinfo = malloc(sizeof(device));
 
@@ -230,6 +231,7 @@ int32_t lcpoweron(void){
     rfrm = lcloud_io_bus(frm, NULL);
     extract_lcloud_registers(rfrm, &b0, &b1, &c0, &c1, &c2, &d0, &d1); //after extract I get probed d0 (22048)
 
+    //---------------------- Device init ----------------------------//
     do{ //find out each multiple devices' number
     
         if(first == true){
@@ -249,17 +251,21 @@ int32_t lcpoweron(void){
         devinfo[n].maxblk = d1;
         logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo[n].did, d0, d1);
 
-        // device tracker
-        devinfo[n].storage = (char**) malloc(sizeof(char*) * devinfo[n].maxblk); //ex. did = 5,  blk = 64
-        memset( devinfo[n].storage, 0, sizeof(char*) * devinfo[n].maxblk);
-        for(i=0; i<devinfo[n].maxblk; i++){
-            devinfo[n].storage[i] = (char*) malloc(sizeof(char) * devinfo[n].maxsec);  //ex. did = 5. sec = 10
-            memset( devinfo[n].storage[i], 0, sizeof(char) * devinfo[n].maxsec);
+        //------------device tracker allocation ----------//
+        devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        for(i=0; i<devinfo[n].maxsec; i++){
+            devinfo[n].storage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
         }
+        // zero out storage (device tracker)
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j< devinfo[n].maxblk; j++){
+                devinfo[n].storage[i][j] = 0;
+            }
+        }
+        /////////////////////////////////////////////////////
+        totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
 
-
-
-        totalblock += sizeof(**devinfo[n].storage);
+        
         
         //increment index(next device)
         n++;
@@ -275,13 +281,6 @@ int32_t lcpoweron(void){
         finfo[fd].flength = -1;
     }
 
-
-    //initiailize secblk
-    for(i=0;i<10;i++){
-        for(j=0;j<64;j++){
-            secblk[i][j] = 0;
-        }
-    }
 
     return 0;
 }
@@ -567,13 +566,12 @@ int lcseek( LcFHandle fh, size_t off ) {
 // Outputs      : 0 if successful test, -1 if failure
 
 int lcclose( LcFHandle fh ) {
-    
+
     //check if there is no file to close
     if(finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "There is no opened file to close");
         return -1;
     }
-    //free if malloc
 
     //close file
     finfo[fh].isopen = false;
@@ -591,6 +589,17 @@ int lcclose( LcFHandle fh ) {
 // Outputs      : 0 if successful test, -1 if failure
 
 int lcshutdown( void ) {
+    int i;
+
+    //////////////////////// free //////////////////////////
+    int n=0;
+    do{
+        for(i = 0; i < devinfo[n].maxblk; i++)
+            free(devinfo[n].storage[i]);
+        free(devinfo[n].storage);
+    }while(n<devicenum);
+    ////////////////////////////////////////////////////////
+
 
     //Poweroff
     frm = create_lcloud_registers(0, 0 ,LC_POWER_OFF ,0, 0, 0, 0); 
