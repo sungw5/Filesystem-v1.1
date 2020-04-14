@@ -51,6 +51,7 @@ typedef struct{
     char **storage;
     int maxblk;
     int maxsec;
+    int devwritten;
     
 }device;
 device *devinfo;
@@ -67,15 +68,18 @@ int totalblock = 0; // total number of blocks calculated during allocation
 
 void getfreeblk(){
     int i,j;
-    for(i=0; i<10; i++){
-        for(j=0; j<64; j++){
-            if(secblk[i][j] == 0){
-                devinfo->sec = i;
-                devinfo->blk = j;
-                return ;
+    int n=0;
+    do{
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j<devinfo[n].maxblk; j++){
+                if(devinfo[n].storage[i][j] == 0){
+                    devinfo->sec = i;
+                    devinfo->blk = j;
+                    return ;
+                }
             }
         }
-    }
+    }while(n<devicenum);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -266,6 +270,9 @@ int32_t lcpoweron(void){
         totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
 
         
+        devinfo[n].blk = 0;
+        devinfo[n].sec = 0;
+        devinfo[n].devwritten =0;
         
         //increment index(next device)
         n++;
@@ -432,7 +439,8 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
 int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
-    uint64_t writebytes, filepos, blknum, secnum;
+    uint64_t writebytes, filepos, blknum;
+    uint64_t secnum;
     uint16_t offset, remaining, size;
     char tempbuf[LC_DEVICE_BLOCK_SIZE];
 
@@ -457,24 +465,24 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
     while(writebytes > 0){
 
-        blknum = filepos/LC_DEVICE_BLOCK_SIZE;     // len/256
+        blknum = devinfo->devwritten /LC_DEVICE_BLOCK_SIZE;     // len/256
         offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
+        secnum = devinfo->devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
 
 
         ////////////////////// Sector and Block ///////////////////////////////
         // mark off used sectors or block
-        if(devinfo->blk == (blknum % 10)){
-            secblk[devinfo->sec][devinfo->blk] = 1;
+        if(devinfo->blk == blknum){
+            devinfo->storage[devinfo->sec][devinfo->blk] = 1;
         }
         getfreeblk();
-        if(devinfo->blk > 63){
-            logMessage(LOG_ERROR_LEVEL, "Block number exceeds 64");
+        if(devinfo->blk > devinfo->maxblk){
+            logMessage(LOG_ERROR_LEVEL, "Block number exceeds memory");
             return -1;
         }
 
-        devinfo->blk = blknum;
+        devinfo->blk = blknum % devinfo->maxblk;
         devinfo->sec = secnum;
         //////////////////// Sector and Block end /////////////////////////////
         
@@ -517,6 +525,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         filepos += size; 
         writebytes -= size;
         buf += size;
+        devinfo->devwritten += size;
 
 
         // if position exceeds the size of the file then increase file size to current position
