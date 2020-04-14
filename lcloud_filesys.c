@@ -464,18 +464,20 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
 
     while(writebytes > 0){
-
-        blknum = devinfo->devwritten /LC_DEVICE_BLOCK_SIZE;     // len/256
-        offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
-        remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = devinfo->devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
-
-
-        ////////////////////// Sector and Block ///////////////////////////////
         // mark off used sectors or block
+
         if(devinfo->blk == blknum){
             devinfo->storage[devinfo->sec][devinfo->blk] = 1;
         }
+
+        blknum = (devinfo->devwritten /LC_DEVICE_BLOCK_SIZE) % devinfo->maxblk;     // len/256
+        offset = devinfo->devwritten % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
+        remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
+        secnum = (devinfo->devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk)) % devinfo->maxsec; //filepos/2304
+
+
+        ////////////////////// Sector and Block ///////////////////////////////
+        
         getfreeblk();
         if(devinfo->blk > devinfo->maxblk){
             logMessage(LOG_ERROR_LEVEL, "Block number exceeds memory");
@@ -552,7 +554,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 int lcseek( LcFHandle fh, size_t off ) {
     //filesys finfo;
 
-    if(fh < 0 || finfo[fh].isopen == false || isDeviceOn == false || (finfo[fh].pos + off) > finfo[fh].flength || finfo[fh].flength < 0){
+    if(fh < 0 || finfo[fh].isopen == false || isDeviceOn == false || finfo[fh].flength < 0 /*||(finfo[fh].pos + off) > finfo[fh].flength*/){
         logMessage(LOG_ERROR_LEVEL, "file failed to seek in");
         return -1;
     }
