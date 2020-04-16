@@ -511,12 +511,16 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             findnextfreedev = true;
         }
 
+        // just in case of F-15 off=925 sz=298
+        if(prevfilesnow == finfo[fh].fnow && devinfo[finfo[fh].fnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
+            devinfo[now].sec = finfo[fh].fsec;
+            devinfo[now].blk = finfo[fh].fblk;
+        }
         //allocate block if block is empty
-
-        if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] < 1){
+        else if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] < 1){
             devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 1;
             allocatedblock++;
-            logMessage(LOG_INFO_LEVEL, "Allocated block %d out of %d (%0.2f%%)", allocatedblock, totalblock, allocatedblock/totalblock);
+            logMessage(LOG_INFO_LEVEL, "Allocated block %d out of %d (%0.2f%%)", allocatedblock, totalblock, (float)allocatedblock/(float)totalblock);
             logMessage(LcDriverLLevel, "Allocated block for data [%d/%d/%d]", devinfo[now].did, devinfo[now].sec, devinfo[now].blk);
             finfo[fh].fdid = devinfo[now].did;
             finfo[fh].fsec = devinfo[now].sec;
