@@ -26,7 +26,7 @@ typedef int bool;
 static LCloudRegisterFrame frm, rfrm, b0, b1, c0, c1, c2, d0, d1;
 LCloudRegisterFrame nextd0;
 int numdevice; //number of devices // there are 5 devices in assign3
-#define filenum 100
+#define filenum 33
 #define devicenum 5
 
 
@@ -40,25 +40,33 @@ typedef struct{
     bool isopen;
     uint32_t pos;
     int flength;
+    //device info <-> file 
+    int fnow;
+    LcDeviceId fdid;
+    int fsec;
+    int fblk;
+
 
 }filesys;
 filesys finfo[filenum]; //file structure
 
 typedef struct{
     LcDeviceId did;
-    int blk;
     int sec;
+    int blk;
     char **storage;
-    int maxblk;
     int maxsec;
+    int maxblk;
     int devwritten;
+    int devread;
     
 }device;
 device *devinfo;
-
+int allocatedblock = 0; // number of blocks allocated
 int totalblock = 0; // total number of blocks calculated during allocation
-
-
+int now = 0; // current device id
+int prevfilesnow = 0; //previous file's device id
+bool findnextfreedev;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -66,21 +74,35 @@ int totalblock = 0; // total number of blocks calculated during allocation
 // Function     : getfreeblk
 // Description  : iterate the storage(2d array) and find the free sector(i)&block(j) to read/write
 
-void getfreeblk(){
+void getfreeblk(int n, LcFHandle fh){ //argument = now 
     int i,j;
-    int n=0;
-    do{
-        for(i=0; i<devinfo[n].maxsec; i++){
-            for(j=0; j<devinfo[n].maxblk; j++){
-                if(devinfo[n].storage[i][j] == 0){
-                    devinfo->sec = i;
-                    devinfo->blk = j;
-                    return ;
-                }
+
+    for(i=0; i<devinfo[n].maxsec; i++){
+        for(j=0; j<devinfo[n].maxblk; j++){
+            if(devinfo[n].storage[i][j] == 0){
+                devinfo[n].sec = i;
+                devinfo[n].blk = j;
+                now = n;
+                return ;
             }
         }
-    }while(n<devicenum);
+    }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : nextdevice
+// Description  : move onto next device
+
+void nextdevice(int *n){
+    if(*n>=devicenum-1){
+        *n=0;
+    }
+    else{
+        (*n)++;
+    }
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -255,6 +277,8 @@ int32_t lcpoweron(void){
         devinfo[n].maxblk = d1;
         logMessage(LcControllerLLevel, "Found device [did=%d, secs=%d, blks=%d] in cloud probe.", devinfo[n].did, d0, d1);
 
+        
+
         //------------device tracker allocation ----------//
         devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         for(i=0; i<devinfo[n].maxsec; i++){
@@ -273,6 +297,7 @@ int32_t lcpoweron(void){
         devinfo[n].blk = 0;
         devinfo[n].sec = 0;
         devinfo[n].devwritten =0;
+        devinfo[n].devread =0;
         
         //increment index(next device)
         n++;
@@ -286,6 +311,11 @@ int32_t lcpoweron(void){
         finfo[fd].pos = -1;
         finfo[fd].fhandle = -1;
         finfo[fd].flength = -1;
+        //device <-> file
+        finfo[fd].fdid = -1;
+        finfo[fd].fsec = -1;
+        finfo[fd].fblk = -1;
+        finfo[fd].fnow = -1;
     }
 
 
@@ -331,6 +361,11 @@ LcFHandle lcopen( const char *path ) {
     finfo[fd].fhandle = fd;                //pick unique file handle
     finfo[fd].pos = 0;                     //set file pointer to first byte
     finfo[fd].flength = 0;
+    //device <-> file
+    finfo[fd].fdid = 0;
+    finfo[fd].fsec = 0;
+    finfo[fd].fblk = 0;
+    finfo[fd].fnow = 0;
 
 
     logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", finfo[fd].fname, finfo[fd].fhandle);
@@ -387,10 +422,10 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
     while( readbytes > 0){
         //memset(tempbuf, 0x0, LC_DEVICE_BLOCK_SIZE);
         
-        blknum = filepos/LC_DEVICE_BLOCK_SIZE;     // len/256
-        offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
+        blknum = (devinfo->devread /LC_DEVICE_BLOCK_SIZE) % devinfo->maxblk;     // len/256
+        offset = devinfo->devread % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = filepos/ (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk); //filepos/2304
+        secnum = (devinfo->devread / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk)) % devinfo->maxsec; //filepos/2304
 
 
         //if exceeds the len we will write will be the remaining
@@ -401,7 +436,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             size = remaining;
         }
         
-        devinfo->blk = blknum;
+        devinfo->blk = blknum % devinfo->maxblk;
         devinfo->sec = secnum;
 
         // read, and copy up to len to the buf
@@ -413,6 +448,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         filepos += size;
         readbytes -= size;
         buf += size;
+        devinfo->devread += size;
 
         
         // if position exceeds the size of the file then increase file size to current position
@@ -439,10 +475,12 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
 int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
-    uint64_t writebytes, filepos, blknum;
-    uint64_t secnum;
+    uint64_t writebytes, filepos;
+    //uint64_t blknum, secnum;
     uint16_t offset, remaining, size;
     char tempbuf[LC_DEVICE_BLOCK_SIZE];
+    prevfilesnow = now; // save last block point
+    
 
 
     /*************Error Checking****************/
@@ -459,33 +497,50 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     }
     
     /*************Begin Writing****************/
-    writebytes = len;
+    writebytes = len;;
     filepos = finfo[fh].pos;
 
 
     while(writebytes > 0){
-        // mark off used sectors or block
 
-        if(devinfo->blk == blknum){
-            devinfo->storage[devinfo->sec][devinfo->blk] = 1;
+        getfreeblk(now, fh);
+
+        // if there's block has some space left, go back to device that file lastly wrote
+        if(devinfo[finfo[fh].fnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
+            now = finfo[fh].fnow;
+            findnextfreedev = true;
         }
 
-        blknum = (devinfo->devwritten /LC_DEVICE_BLOCK_SIZE) % devinfo->maxblk;     // len/256
-        offset = devinfo->devwritten % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
+        //allocate block
+        
+        if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] < 1){
+            devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 1;
+            allocatedblock++;
+            logMessage(LOG_INFO_LEVEL, "Allocated block %d out of %d (%0.2f%%)", allocatedblock, totalblock, allocatedblock/totalblock);
+            logMessage(LcDriverLLevel, "Allocated block for data [%d/%d/%d]", devinfo[now].did, devinfo[now].sec, devinfo[now].blk);
+            finfo[fh].fdid = devinfo[now].did;
+            finfo[fh].fsec = devinfo[now].sec;
+            finfo[fh].fblk = devinfo[now].blk;
+        } 
+        
+        //blknum = (devinfo[now].devwritten /LC_DEVICE_BLOCK_SIZE) % devinfo[now].maxblk;     // len/256
+        offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = (devinfo->devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk)) % devinfo->maxsec; //filepos/2304
+        //secnum = (devinfo[now].devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo[now].maxblk)) % devinfo[now].maxsec; //filepos/2304
 
 
         ////////////////////// Sector and Block ///////////////////////////////
-        
-        getfreeblk();
-        if(devinfo->blk > devinfo->maxblk){
+
+        if(devinfo[now].blk > devinfo[now].maxblk){
             logMessage(LOG_ERROR_LEVEL, "Block number exceeds memory");
             return -1;
         }
 
-        devinfo->blk = blknum % devinfo->maxblk;
-        devinfo->sec = secnum;
+        // devinfo[now].blk = blknum % devinfo[now].maxblk;
+        // devinfo[now].sec = secnum;
+
+
+
         //////////////////// Sector and Block end /////////////////////////////
         
 
@@ -497,11 +552,19 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             size = remaining;
         }
 
+    
+
         /************** if fills exactly 256  *****************/
         if(offset + writebytes == LC_DEVICE_BLOCK_SIZE){
-            do_read(devinfo->did, devinfo->sec, devinfo->blk, tempbuf); //read to find offset
+            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf); //read to find offset
             memcpy(tempbuf+offset, buf, writebytes );
-            do_write(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
+            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            if(devinfo[now].sec != finfo[fh].fsec || devinfo[now].blk != finfo[fh].fblk){
+                devinfo[now].storage[finfo[fh].fsec][finfo[fh].fblk] = 2;
+            }
+            else{
+                devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 2; // block is full
+            }
         }
         /////////// one block done ///////////
 
@@ -509,25 +572,47 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         /************* if exceeds the block size **************/
         else if(offset + writebytes > LC_DEVICE_BLOCK_SIZE){ 
             //write number of blocks
-            do_read(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
+            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
             memcpy(tempbuf+offset, buf, size );
-            do_write(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
+            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            if(devinfo[now].sec != finfo[fh].fsec || devinfo[now].blk != finfo[fh].fblk){
+                devinfo[now].storage[finfo[fh].fsec][finfo[fh].fblk] = 2;
+            }
+            else{
+                devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 2; // block is full
+            }
             /////////// one block done ///////////
         }
 
         else{  //if(offset + len < 256)
-            do_read(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
+            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
             memcpy(tempbuf+offset, buf, size ); //flength%256 instead of size?
-            do_write(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
-            // fill with garbage??
+            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+
         }
+
+
+
 
 
         ////////update pos, decrease len used (bytesleft to write), update buffer after written///////////////////
         filepos += size; 
         writebytes -= size;
         buf += size;
-        devinfo->devwritten += size;
+        devinfo[now].devwritten += size;
+        finfo[fh].fnow = now;
+        
+        
+
+
+        if(findnextfreedev == true){
+            now = prevfilesnow;
+        }
+        else{
+            nextdevice(&now);
+        }
+        
+        
 
 
         // if position exceeds the size of the file then increase file size to current position
@@ -536,8 +621,9 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         }
       
         finfo[fh].pos = filepos;
+
     }
-    
+    findnextfreedev = false; //reset toggle
     logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, finfo[fh].fname, finfo[fh].flength);
     return( len );
 }
