@@ -511,8 +511,8 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             findnextfreedev = true;
         }
 
-        //allocate block
-        
+        //allocate block if block is empty
+
         if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] < 1){
             devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 1;
             allocatedblock++;
@@ -622,8 +622,9 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
       
         finfo[fh].pos = filepos;
 
+        findnextfreedev = false; //reset toggle
     }
-    findnextfreedev = false; //reset toggle
+    
     logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, finfo[fh].fname, finfo[fh].flength);
     return( len );
 }
