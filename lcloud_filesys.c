@@ -24,7 +24,6 @@ typedef int bool;
 
 
 static LCloudRegisterFrame frm, rfrm, b0, b1, c0, c1, c2, d0, d1;
-LCloudRegisterFrame nextd0;
 int numdevice; //number of devices // there are 5 devices in assign3
 #define filenum 33
 #define devicenum 5
@@ -32,7 +31,6 @@ int numdevice; //number of devices // there are 5 devices in assign3
 
 //LcDeviceId did;
 bool isDeviceOn;
-bool secblk[10][64];
 
 typedef struct{
     char *fname;
@@ -41,10 +39,11 @@ typedef struct{
     uint32_t pos;
     int flength;
     //device info <-> file 
-    int fnow;
-    LcDeviceId fdid;
-    int fsec;
-    int fblk;
+    int wfnow;           // file's most recently wrote device number (storage index)
+    int rfnow;
+    LcDeviceId fdid;    // file's most recently wrote did
+    int fsec;           // file's most recently wrote sector
+    int fblk;           // file's most recently wrote block
 
 
 }filesys;
@@ -54,19 +53,27 @@ typedef struct{
     LcDeviceId did;
     int sec;
     int blk;
-    char **storage;
-    int maxsec;
+    char **storage;        // 0 - empty   1- allocated  2- full
+    char **readstorage;    // 0 - unread  1- read       2~ number of times read
+    char **fileblktracker; // each block contains file handle
+    uint8_t **writecounter;   // each block contains writeorder
+    int maxsec; 
     int maxblk;
-    int devwritten;
+    int devwritten;        // total bytes written in a device
     int devread;
+    int numwritten;
     
 }device;
 device *devinfo;
+
+/*********global variables**********/
 int allocatedblock = 0; // number of blocks allocated
-int totalblock = 0; // total number of blocks calculated during allocation
-int now = 0; // current device id
-int prevfilesnow = 0; //previous file's device id
-bool findnextfreedev;
+int totalblock = 0;     // total number of blocks calculated during allocation
+int now = 0;            // current writing device id
+int readnow = 0;         // current reading device id
+int prevfilesnow = 0;   //previous file's device id
+bool findnextfreedev;   // if file went back to block to fill the block, find next free device or not
+int writeorder = 0;     // order of block written
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -91,6 +98,27 @@ void getfreeblk(int n, LcFHandle fh){ //argument = now
 
 ////////////////////////////////////////////////////////////////////////////////
 //
+// Function     : findsamefileblock
+// Description  : iterate the storage(2d array) and find the blocks that has same fh
+
+void findsamefileblock(int n, LcFHandle fh){ //argument = now 
+    int i,j;
+
+    for(i=0; i<devinfo[n].maxsec; i++){
+        for(j=0; j<devinfo[n].maxblk; j++){
+            if(devinfo[n].fileblktracker[i][j] == fh  && devinfo[n].readstorage[i][j] == 0){
+                devinfo[n].sec = i;
+                devinfo[n].blk = j;
+                readnow = n;
+                return ;
+            }
+
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
 // Function     : nextdevice
 // Description  : move onto next device
 
@@ -102,7 +130,6 @@ void nextdevice(int *n){
         (*n)++;
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -165,9 +192,7 @@ uint8_t probeID(uint16_t id0){
         id0 >>= 1;
         count++;
     }
-
     d0 = temp - leastbit;
-
 
     return count-1;  //shifted amount -1 will be device id
 }
@@ -236,8 +261,6 @@ int32_t lcpoweron(void){
     int fd;
     int reserved0;
 
-    //devinfo = malloc(sizeof(device));
-
     logMessage(LcControllerLLevel, "Initialzing Lion Cloud system ...");
 
     // Do Operation - PowerOn
@@ -279,7 +302,7 @@ int32_t lcpoweron(void){
 
         
 
-        //------------device tracker allocation ----------//
+        //------------device storage allocation ----------//
         devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         for(i=0; i<devinfo[n].maxsec; i++){
             devinfo[n].storage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
@@ -291,13 +314,56 @@ int32_t lcpoweron(void){
             }
         }
         /////////////////////////////////////////////////////
-        totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
 
+        //------------device read storage allocation ----------//
+        devinfo[n].readstorage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        for(i=0; i<devinfo[n].maxsec; i++){
+            devinfo[n].readstorage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+        }
+        // zero out.readstorage (device tracker)
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j< devinfo[n].maxblk; j++){
+                devinfo[n].readstorage[i][j] = 0;
+            }
+        }
+        /////////////////////////////////////////////////////
+
+        //------------file block tracker allocation ----------//
+        devinfo[n].fileblktracker = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        for(i=0; i<devinfo[n].maxsec; i++){
+            devinfo[n].fileblktracker[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+        }
+        // zero out fileblktracker (device tracker)
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j< devinfo[n].maxblk; j++){
+                devinfo[n].fileblktracker[i][j] = 0;
+            }
+        }
+        /////////////////////////////////////////////////////
+
+        //------------write counter allocation ----------//
+        devinfo[n].writecounter = (uint8_t **) malloc(sizeof(uint8_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        for(i=0; i<devinfo[n].maxsec; i++){
+            devinfo[n].writecounter[i] = (uint8_t *) malloc(sizeof(uint8_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+        }
+        // zero out writecounter (device tracker)
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j< devinfo[n].maxblk; j++){
+                devinfo[n].writecounter[i][j] = 0;
+            }
+        }
+        /////////////////////////////////////////////////////
+
+
+
+
+        totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
         
         devinfo[n].blk = 0;
         devinfo[n].sec = 0;
         devinfo[n].devwritten =0;
         devinfo[n].devread =0;
+        devinfo[n].numwritten =0;
         
         //increment index(next device)
         n++;
@@ -315,9 +381,9 @@ int32_t lcpoweron(void){
         finfo[fd].fdid = -1;
         finfo[fd].fsec = -1;
         finfo[fd].fblk = -1;
-        finfo[fd].fnow = -1;
+        finfo[fd].wfnow = -1;
+        finfo[fd].rfnow = -1;
     }
-
 
     return 0;
 }
@@ -365,7 +431,8 @@ LcFHandle lcopen( const char *path ) {
     finfo[fd].fdid = 0;
     finfo[fd].fsec = 0;
     finfo[fd].fblk = 0;
-    finfo[fd].fnow = 0;
+    finfo[fd].wfnow = 0;
+    finfo[fd].rfnow = 0;
 
 
     logMessage(LcControllerLLevel, "Opened new file [%s], fh=%d.", finfo[fd].fname, finfo[fd].fhandle);
@@ -385,9 +452,11 @@ LcFHandle lcopen( const char *path ) {
 
 int lcread( LcFHandle fh, char *buf, size_t len ) {
 
-    uint32_t readbytes, filepos, blknum, secnum;
+    uint32_t readbytes, filepos;
+    //uint64_t blknum, secnum;
     uint16_t offset, remaining, size;
     char tempbuf[LC_DEVICE_BLOCK_SIZE];
+    prevfilesnow = readnow; // save last block point
 
     memset(tempbuf, 0x0, LC_DEVICE_BLOCK_SIZE);
     
@@ -420,12 +489,24 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
     /////////////// begin reading ////////////////////
 
     while( readbytes > 0){
-        //memset(tempbuf, 0x0, LC_DEVICE_BLOCK_SIZE);
+        if(firstread = true){
+            findsamefileblock(readnow, fh);
+        }
+        else{
+            
+            devinfo[readnow].writecounter[devinfo[readnow].sec][devinfo[readnow].blk] < 
+        }
+
         
-        blknum = (devinfo->devread /LC_DEVICE_BLOCK_SIZE) % devinfo->maxblk;     // len/256
-        offset = devinfo->devread % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
+         
+        
+
+        // if(devinfo[readnow].fileblktracker[finfo[fh].fsec][finfo[fh].fblk] != fh){ //if file that wrote the blk is != fh, break
+        //     break;
+        // }
+        
+        offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        secnum = (devinfo->devread / (LC_DEVICE_BLOCK_SIZE * devinfo->maxblk)) % devinfo->maxsec; //filepos/2304
 
 
         //if exceeds the len we will write will be the remaining
@@ -435,20 +516,31 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         else{
             size = remaining;
         }
+
+        /************ if read exceeds the block size (256) *************/
+        if(offset + readbytes >= LC_DEVICE_BLOCK_SIZE){
+            // read, and copy up to len to the buf
+            do_read(devinfo[readnow].did, devinfo[readnow].sec, devinfo[readnow].blk, tempbuf);
+            memcpy(buf, tempbuf+offset, size); 
+            devinfo[readnow].readstorage[devinfo[readnow].sec][devinfo[readnow].blk] += 1;  //increment number of times read
+        }
+        else{
+            // read, and copy up to len to the buf
+            do_read(devinfo[readnow].did, devinfo[readnow].sec, devinfo[readnow].blk, tempbuf);
+            memcpy(buf, tempbuf+offset, size);
+
+        }
         
-        devinfo->blk = blknum % devinfo->maxblk;
-        devinfo->sec = secnum;
-
-        // read, and copy up to len to the buf
-        do_read(devinfo->did, devinfo->sec, devinfo->blk, tempbuf);
-        memcpy(buf, tempbuf+offset, size);
-
+        
 
         /////// update position, readbytes, and buf offset //////
         filepos += size;
         readbytes -= size;
         buf += size;
         devinfo->devread += size;
+        finfo[fh].rfnow = readnow;
+
+        nextdevice(&readnow);
 
         
         // if position exceeds the size of the file then increase file size to current position
@@ -476,15 +568,13 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
     uint64_t writebytes, filepos;
-    //uint64_t blknum, secnum;
     uint16_t offset, remaining, size;
     char tempbuf[LC_DEVICE_BLOCK_SIZE];
     prevfilesnow = now; // save last block point
     
 
-
     /*************Error Checking****************/
-    
+
     //check if file handle is valid (is associated with open file)
     if(finfo[fh].fhandle != fh || fh < 0 || finfo[fh].isopen == false){
         logMessage(LOG_ERROR_LEVEL, "Failed to write: file handle is not valid or file is not opened");
@@ -496,23 +586,23 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         return -1;
     }
     
-    /*************Begin Writing****************/
+    /******************Begin Writing********************/
     writebytes = len;;
     filepos = finfo[fh].pos;
 
 
     while(writebytes > 0){
 
-        getfreeblk(now, fh);
+        getfreeblk(now, fh);   // find empty block within the passed device
 
         // if there's block has some space left, go back to device that file lastly wrote
-        if(devinfo[finfo[fh].fnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
-            now = finfo[fh].fnow;
+        if(devinfo[finfo[fh].wfnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
+            now = finfo[fh].wfnow;
             findnextfreedev = true;
         }
 
-        // just in case of F-15 off=925 sz=298
-        if(prevfilesnow == finfo[fh].fnow && devinfo[finfo[fh].fnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
+        // just in case of F-15 off=925 sz=298  -> when there's block file did not finish writing but skip and tries to find empty blk in same device
+        if(prevfilesnow == finfo[fh].wfnow && devinfo[finfo[fh].wfnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
             devinfo[now].sec = finfo[fh].fsec;
             devinfo[now].blk = finfo[fh].fblk;
         }
@@ -527,25 +617,14 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             finfo[fh].fblk = devinfo[now].blk;
         } 
         
-        //blknum = (devinfo[now].devwritten /LC_DEVICE_BLOCK_SIZE) % devinfo[now].maxblk;     // len/256
         offset = filepos % LC_DEVICE_BLOCK_SIZE;  //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
-        //secnum = (devinfo[now].devwritten / (LC_DEVICE_BLOCK_SIZE * devinfo[now].maxblk)) % devinfo[now].maxsec; //filepos/2304
 
-
-        ////////////////////// Sector and Block ///////////////////////////////
 
         if(devinfo[now].blk > devinfo[now].maxblk){
             logMessage(LOG_ERROR_LEVEL, "Block number exceeds memory");
             return -1;
         }
-
-        // devinfo[now].blk = blknum % devinfo[now].maxblk;
-        // devinfo[now].sec = secnum;
-
-
-
-        //////////////////// Sector and Block end /////////////////////////////
         
 
         //if exceeds the len we will write will be the remaining
@@ -555,8 +634,6 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         else{
             size = remaining;
         }
-
-    
 
         /************** if fills exactly 256  *****************/
         if(offset + writebytes == LC_DEVICE_BLOCK_SIZE){
@@ -595,20 +672,25 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
         }
 
+        // each block remembers when in which times it was written by a file
+        writeorder++;
 
+        devinfo[now].writecounter[finfo[fh].fsec][finfo[fh].fblk]= writeorder;
+        
+        
 
-
+        // block remembers which file wrote on it
+        devinfo[now].fileblktracker[finfo[fh].fsec][finfo[fh].fblk] = finfo[fh].fhandle;
 
         ////////update pos, decrease len used (bytesleft to write), update buffer after written///////////////////
         filepos += size; 
         writebytes -= size;
         buf += size;
         devinfo[now].devwritten += size;
-        finfo[fh].fnow = now;
-        
+        finfo[fh].wfnow = now;
         
 
-
+        //if file goes back to not-filled block and tries to find next block, the block will be previous file's nextdevice
         if(findnextfreedev == true){
             now = prevfilesnow;
         }
@@ -616,8 +698,6 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             nextdevice(&now);
         }
         
-        
-
 
         // if position exceeds the size of the file then increase file size to current position
         if(filepos > finfo[fh].flength){
