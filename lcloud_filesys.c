@@ -62,6 +62,8 @@ typedef struct{
     char **fileblktracker; // each block contains file handle
     uint8_t **writecounter;   // each block contains writeorder
     uint8_t **fblknum;
+    uint64_t **filepostracker;  // each block contains filepos (beginning of the blk)
+
     int maxsec; 
     int maxblk;
     int devwritten;        // total bytes written in a device
@@ -79,6 +81,7 @@ int readnow = 0;         // current reading device id
 int prevfilesnow = 0;   //previous file's device id
 bool findnextfreedev;   // if file went back to block to fill the block, find next free device or not
 int writeorder = 0;     // order of block written
+bool firstoverwrite;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -116,7 +119,7 @@ void findsamefileblock(int n, LcFHandle fh){ //argument = readnow
     do{
         for(i=0; i<devinfo[n].maxsec; i++){
             for(j=0; j<devinfo[n].maxblk; j++){
-                if(devinfo[n].fileblktracker[i][j] == fh  && finfo[fh].pos/LC_DEVICE_BLOCK_SIZE+1 == devinfo[n].fblknum[i][j]){
+                if(devinfo[n].fileblktracker[i][j] == fh && devinfo[n].filepostracker[i][j] <= finfo[fh].pos && devinfo[n].fblknum[i][j] == (finfo[fh].pos/LC_DEVICE_BLOCK_SIZE)+1){
                     devinfo[n].rsec = i;
                     devinfo[n].rblk = j;
                     readnow = n;
@@ -128,7 +131,33 @@ void findsamefileblock(int n, LcFHandle fh){ //argument = readnow
     }while(n<devicenum);
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : findsamefileblock (for write)
+// Description  : find same file block for overwriting
+
+void wfindsamefileblock(int n, LcFHandle fh){ //argument = now 
+    int i,j;
+    n = 0;
+
+    do{
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j<devinfo[n].maxblk; j++){
+                if(devinfo[n].fileblktracker[i][j] == fh && devinfo[n].filepostracker[i][j] <= finfo[fh].pos && devinfo[n].storage[i][j] > 0){
+                    devinfo[n].sec = i;
+                    devinfo[n].blk = j;
+                    now = n;
+                    return ;
+                }
+
+            }
+        }
+    }while(n<devicenum);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 //
 // Function     : findsamefileblock
 // Description  : iterate the storage(2d array) and find the blocks that has same fh
@@ -140,10 +169,35 @@ void findnextsamefileblock(int n, LcFHandle fh){ //argument = now
     do{
         for(i=0; i<devinfo[n].maxsec; i++){
             for(j=0; j<devinfo[n].maxblk; j++){
-                if(devinfo[n].fileblktracker[i][j] == fh && (devinfo[n].writecounter[i][j]-1 == devinfo[readnow].writecounter[devinfo[readnow].rsec][devinfo[readnow].rblk])){
+                if(devinfo[n].fileblktracker[i][j] == fh && devinfo[n].filepostracker[i][j] <= finfo[fh].pos && (devinfo[n].writecounter[i][j]-1 == devinfo[readnow].writecounter[devinfo[readnow].rsec][devinfo[readnow].rblk])){
                     devinfo[n].rsec = i;
                     devinfo[n].rblk = j;
                     readnow = n;
+                    return ;
+                }
+
+            }
+        }
+        n++;
+    }while(n<devicenum);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : wfindsamefileblock
+// Description  : iterate the storage(2d array) and find the blocks that has same fh
+
+void wfindnextsamefileblock(int n, LcFHandle fh){ //argument = now 
+    int i,j;
+    n = 0;
+
+    do{
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j<devinfo[n].maxblk; j++){
+                if(devinfo[n].fileblktracker[i][j] == fh && devinfo[n].filepostracker[i][j] <= finfo[fh].pos && (devinfo[n].writecounter[i][j]-1 == devinfo[now].writecounter[devinfo[now].sec][devinfo[now].blk]) && devinfo[n].storage[i][j] != 3){
+                    devinfo[n].sec = i;
+                    devinfo[n].blk = j;
+                    now = n;
                     return ;
                 }
 
@@ -403,7 +457,18 @@ int32_t lcpoweron(void){
         }
         /////////////////////////////////////////////////////
 
-
+        //------------filepostracker allocation ----------//
+        devinfo[n].filepostracker = (uint64_t **) malloc(sizeof(uint64_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        for(i=0; i<devinfo[n].maxsec; i++){
+            devinfo[n].filepostracker[i] = (uint64_t *) malloc(sizeof(uint64_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+        }
+        // zero out filepostracker (device tracker)
+        for(i=0; i<devinfo[n].maxsec; i++){
+            for(j=0; j< devinfo[n].maxblk; j++){
+                devinfo[n].filepostracker[i][j] = 0;
+            }
+        }
+        /////////////////////////////////////////////////////
 
 
         totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
@@ -580,6 +645,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             devinfo[readnow].readstorage[devinfo[readnow].rsec][devinfo[readnow].rblk] += 1;  //increment number of times read
         }
         else{
+
             // read, and copy up to len to the buf
             do_read(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk, tempbuf);
             memcpy(buf, tempbuf+offset, size);
@@ -650,11 +716,18 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
     /******************Begin Writing********************/
     writebytes = len;;
     filepos = finfo[fh].pos;
+    if(filepos < finfo[fh].flength) firstoverwrite = true;
+
 
 
     while(writebytes > 0){
-
+        
+        
         getfreeblk(now, fh);   // find empty block within the passed device
+
+        if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] == 0){  //if writing first time on that blk
+            devinfo[now].filepostracker[devinfo[now].sec][devinfo[now].blk] = filepos; //each blk remembers filepos (beginning)
+        }
 
         // if there's block has some space left, go back to device that file lastly wrote
         if(devinfo[finfo[fh].wfnow].storage[finfo[fh].fsec][finfo[fh].fblk] == 1){
@@ -667,6 +740,21 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
             devinfo[now].sec = finfo[fh].fsec;
             devinfo[now].blk = finfo[fh].fblk;
         }
+
+        // when seek brings back to position where already written
+        if(filepos < finfo[fh].flength){
+            if(firstoverwrite ==true){
+                wfindsamefileblock(now, fh);
+                logMessage(LOG_INFO_LEVEL, "file overwrites from pos:%d", filepos);
+            }
+            else{
+                wfindnextsamefileblock(now, fh);
+                logMessage(LOG_INFO_LEVEL, "file overwrites from pos:%d", filepos);
+            }
+            
+        }
+      
+        
         //allocate block if block is empty
         else if(devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] < 1){
             devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 1;
@@ -698,9 +786,18 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
         /************** if fills exactly 256  *****************/
         if(offset + writebytes == LC_DEVICE_BLOCK_SIZE){
-            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf); //read to find offset
-            memcpy(tempbuf+offset, buf, writebytes );
-            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            if(filepos < finfo[fh].flength){
+                do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
+                memcpy(tempbuf+offset, buf, writebytes );
+                do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
+                
+            }
+            else{
+                do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf); //read to find offset
+                memcpy(tempbuf+offset, buf, writebytes );
+                do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            }
+            
 
             if(devinfo[now].sec != finfo[fh].fsec || devinfo[now].blk != finfo[fh].fblk){
                 devinfo[now].storage[finfo[fh].fsec][finfo[fh].fblk] = 2;
@@ -716,10 +813,17 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
         /************* if exceeds the block size **************/
         else if(offset + writebytes > LC_DEVICE_BLOCK_SIZE){ 
-            //write number of blocks
-            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
-            memcpy(tempbuf+offset, buf, size );
-            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            if(filepos < finfo[fh].flength){
+                do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
+                memcpy(tempbuf+offset, buf, size );
+                do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
+
+            }
+            else{
+                do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+                memcpy(tempbuf+offset, buf, size );
+                do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            }
 
             if(devinfo[now].sec != finfo[fh].fsec || devinfo[now].blk != finfo[fh].fblk){
                 devinfo[now].storage[finfo[fh].fsec][finfo[fh].fblk] = 2;
@@ -733,10 +837,26 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         }
 
         else{  //if(offset + len < 256)
-            do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
-            memcpy(tempbuf+offset, buf, size ); //flength%256 instead of size?
-            do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            if(filepos < finfo[fh].flength){
+                do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
+                memcpy(tempbuf+offset, buf, size );
+                do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
 
+            }
+            else{
+                do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+                memcpy(tempbuf+offset, buf, size ); //flength%256 instead of size?
+                do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+            }
+            if(devinfo[now].fblknum[finfo[fh].fsec][finfo[fh].fblk] == 0){
+                finfo[fh].fileblknum += 1;
+                devinfo[now].fblknum[finfo[fh].fsec][finfo[fh].fblk] = finfo[fh].fileblknum;
+            }
+        }
+
+
+        if(filepos < finfo[fh].flength){
+            devinfo[now].storage[devinfo[now].sec][devinfo[now].blk] = 3; // when overwritten
         }
 
 
@@ -760,7 +880,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         filepos += size; 
         writebytes -= size;
         buf += size;
-        devinfo[now].devwritten += size;
+        devinfo[now].devwritten += size; // plus amount of overwritten
         finfo[fh].wfnow = now;
 
 
@@ -779,6 +899,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         finfo[fh].pos = filepos;
 
         findnextfreedev = false; //reset toggle
+        firstoverwrite = false;
     }
     
     logMessage(LcDriverLLevel, "Driver wrote %d bytes to file %s (now %d bytes)", len, finfo[fh].fname, finfo[fh].flength);

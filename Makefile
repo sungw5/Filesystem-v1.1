@@ -1,6 +1,6 @@
 #
-# CMPSC311 - LionCloud Device - Assignment #2
-# Makefile - makefile to build the base system
+# CMPSC311 - LionCloud Device - Assignment #3
+# Makefile - makefile to build the base system (with caching)
 #
 
 # Locations
@@ -23,7 +23,8 @@ AR=ar
 	
 # Files
 OBJECT_FILES=	lcloud_sim.o \
-				lcloud_filesys.o
+				lcloud_filesys.o \
+				lcloud_cache.o
 				
 # Productions
 all : lcloud_sim

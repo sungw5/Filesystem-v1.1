@@ -255,8 +255,8 @@ int simulateLionCloud( char *hwdef, char *wload ) {
 				/* Compare the data read with that in the workload data */
 				if ( strncmp(buf, operation.data, operation.size) != 0 ) {
 					logMessage( LOG_ERROR_LEVEL, "CMPSC311 read data compare failed, aborting" );
-					logMessage( LOG_ERROR_LEVEL, "Read data     : [%s]", buf );
-					logMessage( LOG_ERROR_LEVEL, "Expected data : [%s]", operation.data );
+					logMessage( LOG_ERROR_LEVEL, "Read data     : [%.20s]", buf );
+					logMessage( LOG_ERROR_LEVEL, "Expected data : [%.20s]", operation.data );
 					return( -1 );
 				}
 
