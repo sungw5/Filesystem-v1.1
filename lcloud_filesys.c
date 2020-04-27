@@ -57,7 +57,6 @@ typedef struct{
     int rsec;
     int rblk;
     char **storage;        // 0 - empty   1- allocated  2- full
-    char **readstorage;    // 0 - unread  1- read       2~ number of times read
     char **fileblktracker; // each block contains file handle
     uint64_t **filepostracker;  // each block contains filepos (beginning of the blk)
     int maxsec; 
@@ -336,12 +335,10 @@ int32_t lcpoweron(void){
 
         //------------2d array dynamic allocation----------//
         devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
-        devinfo[n].readstorage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         devinfo[n].fileblktracker = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         devinfo[n].filepostracker = (uint64_t **) malloc(sizeof(uint64_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         for(i=0; i<devinfo[n].maxsec; i++){
             devinfo[n].storage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
-            devinfo[n].readstorage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
             devinfo[n].fileblktracker[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
             devinfo[n].filepostracker[i] = (uint64_t *) malloc(sizeof(uint64_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
         }
@@ -349,7 +346,6 @@ int32_t lcpoweron(void){
         for(i=0; i<devinfo[n].maxsec; i++){
             for(j=0; j< devinfo[n].maxblk; j++){
                 devinfo[n].storage[i][j] = 0;
-                devinfo[n].readstorage[i][j] = 0;
                 devinfo[n].fileblktracker[i][j] = 0;
                 devinfo[n].filepostracker[i][j] = 0;
             }
@@ -511,15 +507,12 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             // read, and copy up to len to the buf
             do_read(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk, tempbuf);
             memcpy(buf, tempbuf+offset, size); 
-            devinfo[readnow].readstorage[devinfo[readnow].rsec][devinfo[readnow].rblk] += 1;  //increment number of times read
         }
         else{
 
             // read, and copy up to len to the buf
             do_read(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk, tempbuf);
             memcpy(buf, tempbuf+offset, size);
-            devinfo[readnow].readstorage[devinfo[readnow].rsec][devinfo[readnow].rblk] += 1;
-
         }
     
         /////// update position, readbytes, and buf offset //////
@@ -797,20 +790,32 @@ int lcshutdown( void ) {
 
     //////////////////////// free //////////////////////////
     int n=0;
-    do{
-        for(i = 0; i < devinfo[n].maxblk; i++)
+    // do{
+    //     for(i = 0; i < devinfo[n].maxsec; i++){
+    //         free(devinfo[n].storage[i]);
+    //         free(devinfo[n].readstorage[i]);
+    //         free(devinfo[n].fileblktracker[i]);
+    //         free(devinfo[n].filepostracker[i]);
+    //     }      
+    //     free(devinfo[n].storage);    
+    //     free(devinfo[n].readstorage);      
+    //     free(devinfo[n].fileblktracker);
+    //     free(devinfo[n].filepostracker);
+        
+
+    // }while(n<devicenum);
+
+    while(n<devicenum){
+        for(i = 0; i < devinfo[n].maxsec; i++){
             free(devinfo[n].storage[i]);
-        free(devinfo[n].storage);
-
-        for(i = 0; i < devinfo[n].maxblk; i++)
-            free(devinfo[n].readstorage[i]);
-        free(devinfo[n].readstorage);
-
-        for(i = 0; i < devinfo[n].maxblk; i++)
             free(devinfo[n].fileblktracker[i]);
+            free(devinfo[n].filepostracker[i]);
+        }      
+        free(devinfo[n].storage);    
         free(devinfo[n].fileblktracker);
-
-    }while(n<devicenum);
+        free(devinfo[n].filepostracker);
+        n++;
+    }
 
     free(devinfo);
     ////////////////////////////////////////////////////////
