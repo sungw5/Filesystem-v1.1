@@ -334,58 +334,27 @@ int32_t lcpoweron(void){
 
         
 
-        //------------device storage allocation ----------//
+        //------------2d array dynamic allocation----------//
         devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        devinfo[n].readstorage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        devinfo[n].fileblktracker = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        devinfo[n].filepostracker = (uint64_t **) malloc(sizeof(uint64_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         for(i=0; i<devinfo[n].maxsec; i++){
             devinfo[n].storage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+            devinfo[n].readstorage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+            devinfo[n].fileblktracker[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+            devinfo[n].filepostracker[i] = (uint64_t *) malloc(sizeof(uint64_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
         }
         // zero out storage (device tracker)
         for(i=0; i<devinfo[n].maxsec; i++){
             for(j=0; j< devinfo[n].maxblk; j++){
                 devinfo[n].storage[i][j] = 0;
-            }
-        }
-        /////////////////////////////////////////////////////
-
-        //------------device read storage allocation ----------//
-        devinfo[n].readstorage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
-        for(i=0; i<devinfo[n].maxsec; i++){
-            devinfo[n].readstorage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
-        }
-        // zero out.readstorage (device tracker)
-        for(i=0; i<devinfo[n].maxsec; i++){
-            for(j=0; j< devinfo[n].maxblk; j++){
                 devinfo[n].readstorage[i][j] = 0;
-            }
-        }
-        /////////////////////////////////////////////////////
-
-        //------------file block tracker allocation ----------//
-        devinfo[n].fileblktracker = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
-        for(i=0; i<devinfo[n].maxsec; i++){
-            devinfo[n].fileblktracker[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
-        }
-        // zero out fileblktracker (device tracker)
-        for(i=0; i<devinfo[n].maxsec; i++){
-            for(j=0; j< devinfo[n].maxblk; j++){
                 devinfo[n].fileblktracker[i][j] = 0;
-            }
-        }
-        /////////////////////////////////////////////////////
-
-        //------------filepostracker allocation ----------//
-        devinfo[n].filepostracker = (uint64_t **) malloc(sizeof(uint64_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
-        for(i=0; i<devinfo[n].maxsec; i++){
-            devinfo[n].filepostracker[i] = (uint64_t *) malloc(sizeof(uint64_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
-        }
-        // zero out filepostracker (device tracker)
-        for(i=0; i<devinfo[n].maxsec; i++){
-            for(j=0; j< devinfo[n].maxblk; j++){
                 devinfo[n].filepostracker[i][j] = 0;
             }
         }
         /////////////////////////////////////////////////////
-
 
         totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
         
