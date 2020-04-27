@@ -16,6 +16,7 @@
 // Project include files
 #include <lcloud_filesys.h>
 #include <lcloud_controller.h>
+#include <lcloud_cache.h>
 
 //bool typedef
 typedef int bool;
@@ -414,6 +415,9 @@ int32_t lcpoweron(void){
         finfo[fd].rfnow = -1;
     }
 
+
+    //lcloud_initcache();
+
     return 0;
 }
 
@@ -514,15 +518,12 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
     filepos = finfo[fh].pos;
     readbytes = len;
 
-    
 
     /////////////// begin reading ////////////////////
 
     while( readbytes > 0){
 
-
-        findsamefileblock(readnow, fh);
-      
+        findsamefileblock(readnow, fh);  
 
         offset = filepos % LC_DEVICE_BLOCK_SIZE; //e.g. 50%256 = 50,  500%256 = 244 (1block and 244bytes)
         remaining = LC_DEVICE_BLOCK_SIZE - offset;  //e.g. 256-(500%256) = 12
@@ -551,9 +552,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             devinfo[readnow].readstorage[devinfo[readnow].rsec][devinfo[readnow].rblk] += 1;
 
         }
-        
-        
-
+    
         /////// update position, readbytes, and buf offset //////
         filepos += size;
         readbytes -= size;
@@ -563,8 +562,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
 
 
         //nextdevice(&readnow);
-        
-
+    
         
         // if position exceeds the size of the file then increase file size to current position
         if(filepos > finfo[fh].flength){
@@ -617,7 +615,6 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
 
 
     while(writebytes > 0){
-        
         
         getfreeblk(now, fh);   // find empty block within the passed device
 
@@ -704,7 +701,6 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
                 do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, size );
                 do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
-
             }
             else{
                 do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
@@ -725,7 +721,6 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
                 do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, size );
                 do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
-
             }
             else{
                 do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
@@ -755,8 +750,7 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
         if(devinfo[now].storage[devinfo[now].maxsec-1][devinfo[now].maxblk-1] == 2){
             nextdevice(&now);
         }
-        
-
+    
 
         // if position exceeds the size of the file then increase file size to current position
         if(filepos > finfo[fh].flength){
