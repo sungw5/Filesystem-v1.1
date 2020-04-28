@@ -4,7 +4,7 @@
 //  Description    : This is the cache implementation for the LionCloud
 //                   assignment for CMPSC311.
 //
-//   Author        : Patrick McDaniel
+//   Author        : Sung Woo Oh
 //   Last Modified : Thu 19 Mar 2020 09:27:55 AM EDT
 //
 
@@ -44,6 +44,7 @@ typedef struct{
 cachedata cdata;
 
 int cachesize; // current cache size
+int maxblock;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -56,8 +57,8 @@ int cachesize; // current cache size
 int findLRU(){
     int i;
 
-    cdata.currentLRUage = cacheinfo[cachesize].howold;
-    for(i=cachesize; i>=0; i--){
+    cdata.currentLRUage = cacheinfo[maxblock].howold;
+    for(i=maxblock; i>=0; i--){
         // find oldest cache item from the end
         if(cdata.currentLRUage < cacheinfo[i].howold){
             cdata.currentLRUage = cacheinfo[i].howold; //update current LRU value as oldest time
@@ -65,9 +66,8 @@ int findLRU(){
             return cdata.currentLRU;
         }
     }
+    return 0;
 }
-
-
 
 //
 // Functions
@@ -123,7 +123,7 @@ int lcloud_putcache( LcDeviceId did, uint16_t sec, uint16_t blk, char *block ) {
     for(i=0; i<cachesize; i++)
         cacheinfo[i].howold += 1; // every caches get old
 
-    for(i=0; i<cachesize; i++){
+    for(i=0; i<maxblock; i++){
 
         /*************** if cache exists, update the cache ***************/
         if(cacheinfo[i].did == did && cacheinfo[i].sec == sec && cacheinfo[i].blk == blk){
@@ -193,9 +193,13 @@ int lcloud_putcache( LcDeviceId did, uint16_t sec, uint16_t blk, char *block ) {
 // Outputs      : 0 if successful, -1 if failure
 
 int lcloud_initcache( int maxblocks ) {
+
     int i=0;
 
-
+    logMessage(LOG_INFO_LEVEL, "init_cmpsc311_cache: initialization complete [%d/%d]", LC_CACHE_MAXBLOCKS, LC_CACHE_MAXBLOCKS*LC_DEVICE_BLOCK_SIZE);
+    logMessage(LOG_INFO_LEVEL, "Cache state [%d items, %d bytes used]", cdata.numitem, cdata.bytesused);
+    
+    // cache info initialization
     cacheinfo = (cachesys *)malloc(sizeof(cachesys) * maxblocks); // 64 cache lines
     while(i<maxblocks){
         cacheinfo[i].did = -1;
@@ -205,13 +209,19 @@ int lcloud_initcache( int maxblocks ) {
         memset(cacheinfo[i].cacheblock, 0, LC_DEVICE_BLOCK_SIZE);
         i++;
     }
+
+    // cache data initialization
     cdata.hits =0;
     cdata.misses =0;
     cdata.numaccess =0;
     cdata.currentLRU = 0;
     cdata.currentLRUage = 0;
+    cdata.bytesused = 0;
+    cdata.numitem =0;
 
+    // global var inaitialization
     cachesize = 0;
+    maxblock = maxblocks;
 
 
     /* Return successfully */
@@ -228,8 +238,9 @@ int lcloud_initcache( int maxblocks ) {
 
 int lcloud_closecache( void ) {
     int i=0;
+
     // clean up
-    while(i<cachesize){
+    while(i<maxblock){
         cacheinfo[i].did = -1;
         cacheinfo[i].sec = -1;
         cacheinfo[i].blk = -1;
