@@ -58,7 +58,7 @@ typedef struct{
     int rblk;
     char **storage;        // 0 - empty   1- allocated  2- full
     char **fileblktracker; // each block contains file handle
-    uint64_t **filepostracker;  // each block contains filepos (beginning of the blk)
+    uint16_t **filepostracker;  // each block contains filepos (beginning of the blk)
     int maxsec; 
     int maxblk;
     int devwritten;        // total bytes written in a device
@@ -292,6 +292,9 @@ int32_t lcpoweron(void){
     int fd;
     int reserved0;
 
+    // cache init
+    lcloud_initcache(LC_CACHE_MAXBLOCKS);
+
     logMessage(LcControllerLLevel, "Initialzing Lion Cloud system ...");
 
     // Do Operation - PowerOn
@@ -304,7 +307,7 @@ int32_t lcpoweron(void){
 
     int n=0; //devinit loop counter
     
-    devinfo = malloc(sizeof(device) * devicenum);
+    devinfo = (device *)malloc(sizeof(device) * devicenum);
 
     // Do Operation - Devprobe
     frm = create_lcloud_registers(0, 0 ,LC_DEVPROBE ,0, 0, 0, 0); 
@@ -313,6 +316,9 @@ int32_t lcpoweron(void){
 
     //---------------------- Device init ----------------------------//
     do{ //find out each multiple devices' number
+        
+        devinfo[n].maxsec = 0;
+        devinfo[n].maxblk = 0;
     
         if(first == true){
             devinfo[n].did = probeID(d0);
@@ -336,11 +342,11 @@ int32_t lcpoweron(void){
         //------------2d array dynamic allocation----------//
         devinfo[n].storage = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         devinfo[n].fileblktracker = (char **) malloc(sizeof(char*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
-        devinfo[n].filepostracker = (uint64_t **) malloc(sizeof(uint64_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
+        devinfo[n].filepostracker = (uint16_t **) malloc(sizeof(uint16_t*) * devinfo[n].maxsec); //ex. did = 5,  blk = 64
         for(i=0; i<devinfo[n].maxsec; i++){
             devinfo[n].storage[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
             devinfo[n].fileblktracker[i] = (char *) malloc(sizeof(char) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
-            devinfo[n].filepostracker[i] = (uint64_t *) malloc(sizeof(uint64_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
+            devinfo[n].filepostracker[i] = (uint16_t *) malloc(sizeof(uint16_t) * devinfo[n].maxblk);  //ex. did = 5. sec = 10
         }
         // zero out storage (device tracker)
         for(i=0; i<devinfo[n].maxsec; i++){
@@ -356,6 +362,8 @@ int32_t lcpoweron(void){
         
         devinfo[n].blk = 0;
         devinfo[n].sec = 0;
+        devinfo[n].rblk = 0;
+        devinfo[n].rsec = 0;
         devinfo[n].devwritten =0;
         devinfo[n].devread =0;
         devinfo[n].numwritten =0;
@@ -502,8 +510,14 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
             size = remaining;
         }
 
+        // if found in cache, get it
+        if(lcloud_getcache(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk) != NULL){
+            memcpy(tempbuf, lcloud_getcache(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk), 256);
+            memcpy(buf, tempbuf+offset, size);
+        }
+
         /************ if read exceeds the block size (256) *************/
-        if(offset + readbytes >= LC_DEVICE_BLOCK_SIZE){
+        else if(offset + readbytes >= LC_DEVICE_BLOCK_SIZE){
             // read, and copy up to len to the buf
             do_read(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk, tempbuf);
             memcpy(buf, tempbuf+offset, size); 
@@ -638,12 +652,13 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
                 do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, writebytes );
                 do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
-                
+                lcloud_putcache(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
             }
             else{
                 do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, writebytes );
                 do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+                lcloud_putcache(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
             }
             
 
@@ -663,11 +678,13 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
                 do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, size );
                 do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
+                lcloud_putcache(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
             }
             else{
                 do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
                 memcpy(tempbuf+offset, buf, size );
                 do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+                lcloud_putcache(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
             }
 
             if(devinfo[now].sec != finfo[fh].fsec || devinfo[now].blk != finfo[fh].fblk){
@@ -683,13 +700,16 @@ int lcwrite( LcFHandle fh, char *buf, size_t len ) {
                 do_read(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf); //read to find offset
                 memcpy(tempbuf+offset, buf, size );
                 do_write(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
+                lcloud_putcache(devinfo[now].did, devinfo[now].sec, devinfo[now].blk, tempbuf);
             }
             else{
                 do_read(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
                 memcpy(tempbuf+offset, buf, size ); //flength%256 instead of size?
                 do_write(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
+                lcloud_putcache(finfo[fh].fdid, finfo[fh].fsec, finfo[fh].fblk, tempbuf);
             }
         }
+        
 
 
         if(filepos < finfo[fh].flength){
@@ -790,21 +810,6 @@ int lcshutdown( void ) {
 
     //////////////////////// free //////////////////////////
     int n=0;
-    // do{
-    //     for(i = 0; i < devinfo[n].maxsec; i++){
-    //         free(devinfo[n].storage[i]);
-    //         free(devinfo[n].readstorage[i]);
-    //         free(devinfo[n].fileblktracker[i]);
-    //         free(devinfo[n].filepostracker[i]);
-    //     }      
-    //     free(devinfo[n].storage);    
-    //     free(devinfo[n].readstorage);      
-    //     free(devinfo[n].fileblktracker);
-    //     free(devinfo[n].filepostracker);
-        
-
-    // }while(n<devicenum);
-
     while(n<devicenum){
         for(i = 0; i < devinfo[n].maxsec; i++){
             free(devinfo[n].storage[i]);
@@ -824,6 +829,11 @@ int lcshutdown( void ) {
     //Poweroff
     frm = create_lcloud_registers(0, 0 ,LC_POWER_OFF ,0, 0, 0, 0); 
     lcloud_io_bus(frm, NULL);
+
+    // close cache
+    lcloud_closecache();
+
+
     logMessage(LcDriverLLevel, "Powered off the Lion cloud system.");
 
     isDeviceOn = false;

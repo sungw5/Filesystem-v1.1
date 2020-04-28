@@ -8,7 +8,7 @@
 # Make environment
 INCLUDES=-I.
 CC=gcc
-CFLAGS=-I. -c -g -Wall $(INCLUDES)
+CFLAGS=-I. -c -g -Wall -fno-stack-protector $(INCLUDES)
 LINKARGS=-g
 LIBS=-L. -llcloudlib -lcmpsc311 -lgcrypt -lcurl
 AR=ar
