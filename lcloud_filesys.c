@@ -308,6 +308,18 @@ int32_t lcpoweron(void){
     int n=0; //devinit loop counter
     
     devinfo = (device *)malloc(sizeof(device) * devicenum);
+    for(i=0; i<devicenum; i++){
+        devinfo[i].did = 0;
+        devinfo[i].sec = 0;
+        devinfo[i].blk = 0;
+        devinfo[i].rsec = 0;
+        devinfo[i].rblk = 0;
+        devinfo[i].maxsec = 0;
+        devinfo[i].maxblk = 0;
+        devinfo[i].numwritten = 0;
+        devinfo[i].devwritten = 0;
+        devinfo[i].devread = 0;
+    }
 
     // Do Operation - Devprobe
     frm = create_lcloud_registers(0, 0 ,LC_DEVPROBE ,0, 0, 0, 0); 
@@ -316,9 +328,6 @@ int32_t lcpoweron(void){
 
     //---------------------- Device init ----------------------------//
     do{ //find out each multiple devices' number
-        
-        devinfo[n].maxsec = 0;
-        devinfo[n].maxblk = 0;
     
         if(first == true){
             devinfo[n].did = probeID(d0);
@@ -359,14 +368,7 @@ int32_t lcpoweron(void){
         /////////////////////////////////////////////////////
 
         totalblock += devinfo[n].maxsec * devinfo[n].maxblk;
-        
-        devinfo[n].blk = 0;
-        devinfo[n].sec = 0;
-        devinfo[n].rblk = 0;
-        devinfo[n].rsec = 0;
-        devinfo[n].devwritten =0;
-        devinfo[n].devread =0;
-        devinfo[n].numwritten =0;
+    
         
         //increment index(next device)
         n++;
@@ -511,7 +513,7 @@ int lcread( LcFHandle fh, char *buf, size_t len ) {
         }
 
         // if found in cache, get it
-        if(lcloud_getcache(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk) != NULL){
+        if(findcache(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk) != 0){
             memcpy(tempbuf, lcloud_getcache(devinfo[readnow].did, devinfo[readnow].rsec, devinfo[readnow].rblk), 256);
             memcpy(buf, tempbuf+offset, size);
         }

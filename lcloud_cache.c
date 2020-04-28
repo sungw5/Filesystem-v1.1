@@ -57,8 +57,8 @@ int maxblock;
 int findLRU(){
     int i;
 
-    cdata.currentLRUage = cacheinfo[maxblock].howold;
-    for(i=maxblock; i>=0; i--){
+    cdata.currentLRUage = cacheinfo[maxblock-1].howold;
+    for(i=maxblock-1; i>0; i--){
         // find oldest cache item from the end
         if(cdata.currentLRUage < cacheinfo[i].howold){
             cdata.currentLRUage = cacheinfo[i].howold; //update current LRU value as oldest time
@@ -67,6 +67,25 @@ int findLRU(){
     }
     return cdata.currentLRU;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : findcache
+// Description  : Search the cache, if not there, return NULL
+//
+// Outputs      : 1 or NULL 
+
+int findcache(LcDeviceId did, uint16_t sec, uint16_t blk){
+    int i;
+    for(i=0; i<cachesize; i++){
+        if(cacheinfo[i].did == did && cacheinfo[i].sec == sec && cacheinfo[i].blk == blk){
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 
 //
 // Functions
@@ -174,7 +193,7 @@ int lcloud_putcache( LcDeviceId did, uint16_t sec, uint16_t blk, char *block ) {
         cacheinfo[cachesize].blk = blk;
         memcpy(cacheinfo[cachesize].cacheblock, block, LC_DEVICE_BLOCK_SIZE); //put data into the cache
         cdata.bytesused += sizeof(cacheinfo[cachesize].cacheblock);
-        cacheinfo[i].howold = 0; // fresh cache
+        cacheinfo[cachesize].howold = 0; // fresh cache
         cachesize += 1; // increment the cache size
     
         logMessage(LOG_INFO_LEVEL, "Getting cache item (not found!)");
@@ -247,7 +266,6 @@ int lcloud_closecache( void ) {
     logMessage(LOG_INFO_LEVEL, "Cache hits       [%d]", cdata.hits);
     logMessage(LOG_INFO_LEVEL, "Cache misses     [%d]", cdata.misses);
     logMessage(LOG_INFO_LEVEL, "Cache efficiency [%0.2f%%]", (float)cdata.hits/(float)cdata.numaccess);
-
 
     // clean up
     while(i<maxblock){

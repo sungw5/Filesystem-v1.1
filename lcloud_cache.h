@@ -20,6 +20,7 @@
 
 //
 // Functional Prototypes
+int findcache(LcDeviceId did, uint16_t sec, uint16_t blk);
 
 char * lcloud_getcache( LcDeviceId did, uint16_t sec, uint16_t blk );
     // Search the cache for a block 
